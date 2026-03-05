@@ -106,42 +106,48 @@ const parseMaterialCSV = (lines) => {
   const headerRow1 = splitCSVRow(lines[mainHeaderIndex]).map(h => h.trim().replace(/^"|"$/g, ''));
   const headerRow2 = (lines.length > mainHeaderIndex + 1) ? splitCSVRow(lines[mainHeaderIndex + 1]).map(h => h.trim().replace(/^"|"$/g, '')) : [];
   
-  const findColumn = (keywords) => {
+  // ⭐️ 정확한 일치(Exact Match)를 먼저 찾도록 개선
+  const findColumnExact = (keywords) => {
       for (const keyword of keywords) {
-          let index = headerRow1.findIndex(h => h === keyword || h.includes(keyword));
+          let index = headerRow1.findIndex(h => h === keyword);
           if (index !== -1) return index;
-          index = headerRow2.findIndex(h => h === keyword || h.includes(keyword));
+          index = headerRow2.findIndex(h => h === keyword);
+          if (index !== -1) return index;
+      }
+      // 정확히 없으면 포함(includes)하는 것 찾기
+      for (const keyword of keywords) {
+          let index = headerRow1.findIndex(h => h.includes(keyword));
+          if (index !== -1) return index;
+          index = headerRow2.findIndex(h => h.includes(keyword));
           if (index !== -1) return index;
       }
       return -1;
   };
 
-  // ⭐️ 두 종류의 번호를 모두 찾도록 수정
   const idx = {
-    mat1: findColumn(['원자재 관리 No']), 
-    mat2: findColumn(['원자재No', 'LOT No']), 
-    ts: findColumn(['인장강도(TS)', '인장강도', 'TS']),
-    md30: findColumn(['Md30', 'MD30'])
+    // ⭐️ '원자재No' (Q로 시작하는 번호)를 최우선으로 찾습니다.
+    materialNo: findColumnExact(['원자재No', 'LOT No']), 
+    ts: findColumnExact(['인장강도(TS)', '인장강도', 'TS']),
+    md30: findColumnExact(['Md30', 'MD30'])
   };
 
+  if (idx.materialNo === -1) return [];
+  
   const parsedMaterials = [];
   let dataStartIndex = mainHeaderIndex + 1;
   if (lines[dataStartIndex] && (lines[dataStartIndex].includes('값') || lines[dataStartIndex].includes('종류'))) { dataStartIndex++; }
   
   for (let i = dataStartIndex; i < lines.length; i++) {
     const row = splitCSVRow(lines[i]);
-    if (row.length < 3) continue;
+    if (row.length <= Math.max(idx.materialNo, idx.ts, idx.md30)) continue;
     
     const getVal = (index) => {
-      if (index === -1 || index >= row.length || !row[index]) return NaN;
+      if (index === -1 || !row[index]) return NaN;
       return parseFloat(row[index].replace(/^"|"$/g, '').replace(/,/g, ''));
     };
-
-    const m1 = idx.mat1 !== -1 && row[idx.mat1] ? row[idx.mat1].replace(/^"|"$/g, '').trim() : '';
-    const m2 = idx.mat2 !== -1 && row[idx.mat2] ? row[idx.mat2].replace(/^"|"$/g, '').trim() : '';
     
-    // ⭐️ 두 번호를 합쳐서 저장 (예: "W100206001 QGA1333") -> 둘 중 뭘로 검색해도 걸립니다!
-    const matNo = `${m1} ${m2}`.trim();
+    // ⭐️ QGA... 형태의 원자재 번호 획득
+    const matNo = row[idx.materialNo] ? row[idx.materialNo].replace(/^"|"$/g, '').trim() : '';
     const ts = getVal(idx.ts);
     const md30 = getVal(idx.md30);
     
@@ -309,6 +315,7 @@ const App = () => {
   useEffect(() => { if (session) fetchDatabase(); }, [session]);
 
   // --- 3. CSV 파일 업로드 후 DB에 바로 저장하기 ---
+// 🚀 CSV 파일을 읽어서 Supabase DB에 덮어쓰기(Overwrite)하는 함수
   const handleFileUpload = async (event, type) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -335,11 +342,27 @@ const App = () => {
 
       if (parsedResult.success && parsedResult.data.length > 0) {
         const tableName = type === 'history' ? 'history_db' : 'material_db';
-        const { error } = await supabase.from(tableName).insert(parsedResult.data);
-        if (error) throw error;
+        const checkColumn = type === 'history' ? 'lot' : 'materialNo';
+        
+        // ⭐️ [핵심] 1단계: 기존에 있던 데이터를 싹 다 지웁니다! (덮어쓰기를 위해)
+        const { error: deleteError } = await supabase
+          .from(tableName)
+          .delete()
+          .not(checkColumn, 'is', null); // 해당 테이블의 모든 데이터를 삭제
+          
+        if (deleteError) throw deleteError;
+
+        // ⭐️ 2단계: 방금 파싱한 새로운 데이터를 밀어 넣습니다.
+        const { error: insertError } = await supabase
+          .from(tableName)
+          .insert(parsedResult.data);
+          
+        if (insertError) throw insertError;
 
         setUploadStatus(prev => ({ ...prev, [type]: 'success' }));
-        alert(`성공적으로 ${parsedResult.data.length}건의 데이터를 DB에 추가했습니다!`);
+        alert(`성공적으로 기존 데이터를 지우고 ${parsedResult.data.length}건의 최신 데이터로 덮어씌웠습니다!`);
+        
+        // 화면에 최신 DB 데이터 다시 불러오기
         fetchDatabase(); 
       } else {
         setUploadStatus(prev => ({ ...prev, [type]: 'error' }));
@@ -348,7 +371,7 @@ const App = () => {
     } catch (error) {
       console.error("DB 업로드 에러:", error);
       setUploadStatus(prev => ({ ...prev, [type]: 'error' }));
-      alert(`업로드 실패: 데이터베이스의 컬럼명(영어 소문자)이 정확히 설정되었는지 확인해 주세요.\n(에러: ${error.message})`);
+      alert(`업로드 실패: ${error.message}`);
     } finally {
       setIsUploading(false);
       event.target.value = ''; 
@@ -553,7 +576,12 @@ const App = () => {
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-2">
               <Calculator className="w-8 h-8 text-blue-600" /> STS 냉간압연 압하율 계산기
             </h1>
-            <p className="text-slate-500 mt-1 text-sm">v10.5 (Cloud DB & Auth Sync)</p>
+            {/* ⭐️ 수정한 부분: 버전 정보 옆에 나란히 제작자 문구 배치 */}
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-slate-500 text-sm">v10.5 (Cloud DB & Auth Sync)</p>
+              <span className="text-slate-300 text-sm">|</span>
+              <p className="text-xs font-semibold text-slate-400 tracking-wide">Made by QA Kim Seong Ryeol</p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right hidden md:block">
