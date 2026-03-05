@@ -95,7 +95,6 @@ const parseHistoryCSV = (lines) => {
   return parsedData;
 };
 
-// 기존 parseMaterialCSV 함수 전체를 아래 코드로 교체해주세요.
 const parseMaterialCSV = (lines) => {
   let mainHeaderIndex = -1;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
@@ -106,7 +105,6 @@ const parseMaterialCSV = (lines) => {
   const headerRow1 = splitCSVRow(lines[mainHeaderIndex]).map(h => h.trim().replace(/^"|"$/g, ''));
   const headerRow2 = (lines.length > mainHeaderIndex + 1) ? splitCSVRow(lines[mainHeaderIndex + 1]).map(h => h.trim().replace(/^"|"$/g, '')) : [];
   
-  // ⭐️ 정확한 일치(Exact Match)를 먼저 찾도록 개선
   const findColumnExact = (keywords) => {
       for (const keyword of keywords) {
           let index = headerRow1.findIndex(h => h === keyword);
@@ -114,7 +112,6 @@ const parseMaterialCSV = (lines) => {
           index = headerRow2.findIndex(h => h === keyword);
           if (index !== -1) return index;
       }
-      // 정확히 없으면 포함(includes)하는 것 찾기
       for (const keyword of keywords) {
           let index = headerRow1.findIndex(h => h.includes(keyword));
           if (index !== -1) return index;
@@ -125,7 +122,6 @@ const parseMaterialCSV = (lines) => {
   };
 
   const idx = {
-    // ⭐️ '원자재No' (Q로 시작하는 번호)를 최우선으로 찾습니다.
     materialNo: findColumnExact(['원자재No', 'LOT No']), 
     ts: findColumnExact(['인장강도(TS)', '인장강도', 'TS']),
     md30: findColumnExact(['Md30', 'MD30'])
@@ -146,7 +142,6 @@ const parseMaterialCSV = (lines) => {
       return parseFloat(row[index].replace(/^"|"$/g, '').replace(/,/g, ''));
     };
     
-    // ⭐️ QGA... 형태의 원자재 번호 획득
     const matNo = row[idx.materialNo] ? row[idx.materialNo].replace(/^"|"$/g, '').trim() : '';
     const ts = getVal(idx.ts);
     const md30 = getVal(idx.md30);
@@ -223,7 +218,6 @@ const removeOutliersAdaptive = (dataList, propertyMode) => {
   return { filtered, removed };
 };
 
-
 // ==========================================
 // 2. 메인 React 컴포넌트
 // ==========================================
@@ -280,23 +274,22 @@ const App = () => {
     setData([]); setMaterialData([]);
   };
 
-// 📡 1. Supabase에서 데이터를 가져오는 함수 (수정된 부분)
+  // 📡 1. Supabase에서 데이터를 가져오는 함수
   const fetchDatabase = async () => {
     try {
       setIsFetching(true);
       
-      // ⭐️ select('*') 뒤에 .limit(10000)을 붙여서 10000건까지 한 번에 가져오라고 명시합니다.
       const { data: historyData, error: historyError } = await supabase
         .from('history_db')
         .select('*')
-        .limit(10000); // 👈 이 부분을 추가했어요!
+        .limit(10000); 
         
       if (historyError) throw historyError;
 
       const { data: matData, error: matError } = await supabase
         .from('material_db')
         .select('*')
-        .limit(10000); // 👈 여기도 추가해 주세요!
+        .limit(10000); 
         
       if (matError) throw matError;
 
@@ -314,8 +307,7 @@ const App = () => {
 
   useEffect(() => { if (session) fetchDatabase(); }, [session]);
 
-  // --- 3. CSV 파일 업로드 후 DB에 바로 저장하기 ---
-// 🚀 CSV 파일을 읽어서 Supabase DB에 덮어쓰기(Overwrite)하는 함수
+  // --- 3. CSV 파일 업로드 후 DB에 바로 덮어쓰기 ---
   const handleFileUpload = async (event, type) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -344,15 +336,13 @@ const App = () => {
         const tableName = type === 'history' ? 'history_db' : 'material_db';
         const checkColumn = type === 'history' ? 'lot' : 'materialNo';
         
-        // ⭐️ [핵심] 1단계: 기존에 있던 데이터를 싹 다 지웁니다! (덮어쓰기를 위해)
         const { error: deleteError } = await supabase
           .from(tableName)
           .delete()
-          .not(checkColumn, 'is', null); // 해당 테이블의 모든 데이터를 삭제
+          .not(checkColumn, 'is', null); 
           
         if (deleteError) throw deleteError;
 
-        // ⭐️ 2단계: 방금 파싱한 새로운 데이터를 밀어 넣습니다.
         const { error: insertError } = await supabase
           .from(tableName)
           .insert(parsedResult.data);
@@ -362,7 +352,6 @@ const App = () => {
         setUploadStatus(prev => ({ ...prev, [type]: 'success' }));
         alert(`성공적으로 기존 데이터를 지우고 ${parsedResult.data.length}건의 최신 데이터로 덮어씌웠습니다!`);
         
-        // 화면에 최신 DB 데이터 다시 불러오기
         fetchDatabase(); 
       } else {
         setUploadStatus(prev => ({ ...prev, [type]: 'error' }));
@@ -379,7 +368,6 @@ const App = () => {
   };
 
   // --- 4. 사용자 입력 폼 핸들러 ---
-// 검색을 수행하는 기존 searchMaterial 함수를 이것으로 교체해주세요. 
   const searchMaterial = () => {
     if (!inputs.materialNo) return;
     if (materialData.length === 0) { 
@@ -389,14 +377,12 @@ const App = () => {
     
     const searchKey = inputs.materialNo.trim().toLowerCase();
     
-    // ⭐️ 대소문자 문제(materialNo vs materialno) 완벽 대응
     const found = materialData.find(m => {
       const matNo = m.materialNo || m.materialno || '';
       return matNo.toLowerCase().includes(searchKey);
     });
 
     if (found) {
-      // ⭐️ 속성 이름 대소문자 문제 완벽 대응
       const ts = found.rawTs !== undefined ? found.rawTs : found.rawts;
       const md = found.md30 !== undefined ? found.md30 : found.md30;
       
@@ -406,12 +392,18 @@ const App = () => {
         md30: !isNaN(md) ? md : prev.md30 
       }));
       
-      // ⭐️ 시각적 피드백 제공
       alert(`[${found.materialNo || found.materialno}] 원소재 정보를 성공적으로 불러왔습니다!`);
     } else { 
       alert(`'${inputs.materialNo}' (을)를 원소재 DB에서 찾을 수 없습니다.`); 
     }
   };
+
+  // ⭐️ 방금 누락되었던 핵심 폼 핸들러들을 완벽하게 복구했습니다!
+  const handleNumberInput = (field, value) => { setInputs(prev => ({ ...prev, [field]: value })); };
+  const toggleThicknessMode = () => { setInputs(prev => ({ ...prev, thicknessMode: prev.thicknessMode === 'target' ? 'input' : 'target' })); };
+  const toggleCalcMode = () => { setCalcMode(prev => prev === 'reduction' ? 'ts' : 'reduction'); setResult(null); };
+  const togglePropertyMode = () => { setPropertyMode(prev => prev === 'ts' ? 'hv' : 'ts'); setResult(null); };
+  const handleKeyDown = (e) => { if (e.key === 'Enter') searchMaterial(); };
 
   // --- 5. 핵심 계산 로직 (데이터가 바뀌거나 입력이 바뀔 때 실행) ---
   useEffect(() => {
@@ -576,7 +568,6 @@ const App = () => {
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-2">
               <Calculator className="w-8 h-8 text-blue-600" /> STS 냉간압연 압하율 계산기
             </h1>
-            {/* ⭐️ 수정한 부분: 버전 정보 옆에 나란히 제작자 문구 배치 */}
             <div className="flex items-center gap-2 mt-1">
               <p className="text-slate-500 text-sm">v10.5 (Cloud DB & Auth Sync)</p>
               <span className="text-slate-300 text-sm">|</span>
@@ -636,18 +627,18 @@ const App = () => {
               {/* 공정 조건 입력 폼 */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Info className="w-4 h-4" /> 공정 조건 입력</h2>
-                    <div className="flex gap-2">
-                      <button onClick={togglePropertyMode} className={`text-xs px-3 py-1 rounded-full border ${propertyMode === 'ts' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{propertyMode === 'ts' ? 'TS 기준' : '경도(HV)'}</button>
-                      <button onClick={toggleCalcMode} className="text-xs bg-slate-100 px-3 py-1 rounded-full border flex items-center gap-1"><ArrowRightLeft className="w-3 h-3" /> {calcMode === 'reduction' ? '역산' : '예측'}</button>
-                    </div>
+                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Info className="w-4 h-4" /> 공정 조건 입력</h2>
+                  <div className="flex gap-2">
+                    <button onClick={togglePropertyMode} className={`text-xs px-3 py-1 rounded-full border ${propertyMode === 'ts' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{propertyMode === 'ts' ? 'TS 기준' : '경도(HV)'}</button>
+                    <button onClick={toggleCalcMode} className="text-xs bg-slate-100 px-3 py-1 rounded-full border flex items-center gap-1"><ArrowRightLeft className="w-3 h-3" /> {calcMode === 'reduction' ? '역산' : '예측'}</button>
+                  </div>
                 </div>
 
                 <div className="space-y-4">
                   <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
                     <label className="block text-xs font-bold text-blue-800 mb-1">원자재 No 검색</label>
                     <div className="flex gap-2">
-                      <input type="text" value={inputs.materialNo} onChange={(e) => handleNumberInput('materialNo', e.target.value)} onKeyDown={handleKeyDown} autoComplete="off" className="flex-1 px-3 py-1.5 text-sm border border-blue-200 rounded outline-none" placeholder="DB에서 검색 (예: W100206001)" />
+                      <input type="text" value={inputs.materialNo} onChange={(e) => handleNumberInput('materialNo', e.target.value)} onKeyDown={handleKeyDown} autoComplete="off" className="flex-1 px-3 py-1.5 text-sm border border-blue-200 rounded outline-none" placeholder="DB에서 검색 (예: QGA2884)" />
                       <button onClick={searchMaterial} className="bg-blue-600 text-white p-1.5 rounded hover:bg-blue-700"><Search className="w-4 h-4" /></button>
                     </div>
                   </div>
@@ -669,20 +660,20 @@ const App = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         {calcMode === 'reduction' ? (
-                            <>
-                              <label className={`block text-sm font-medium mb-1 ${propertyMode==='ts'?'text-blue-900':'text-purple-900'}`}>목표 {propertyMode === 'ts' ? 'TS' : 'HV'}</label>
-                              <input type="number" step="any" autoComplete="off" inputMode="decimal" value={propertyMode === 'ts' ? inputs.targetTs : inputs.targetHv} onChange={(e) => handleNumberInput(propertyMode === 'ts' ? 'targetTs' : 'targetHv', e.target.value)} className={`w-full px-3 py-2 border rounded-lg outline-none font-bold ${propertyMode==='ts'?'border-blue-200 bg-blue-50 text-blue-900':'border-purple-200 bg-purple-50 text-purple-900'}`} />
-                            </>
+                          <>
+                            <label className={`block text-sm font-medium mb-1 ${propertyMode==='ts'?'text-blue-900':'text-purple-900'}`}>목표 {propertyMode === 'ts' ? 'TS' : 'HV'}</label>
+                            <input type="number" step="any" autoComplete="off" inputMode="decimal" value={propertyMode === 'ts' ? inputs.targetTs : inputs.targetHv} onChange={(e) => handleNumberInput(propertyMode === 'ts' ? 'targetTs' : 'targetHv', e.target.value)} className={`w-full px-3 py-2 border rounded-lg outline-none font-bold ${propertyMode==='ts'?'border-blue-200 bg-blue-50 text-blue-900':'border-purple-200 bg-purple-50 text-purple-900'}`} />
+                          </>
                         ) : (
-                            <>
-                              <label className="block text-sm font-medium text-blue-900 mb-1">입력 압하율 (%)</label>
-                              <input type="number" step="any" autoComplete="off" inputMode="decimal" value={inputs.inputReduction} onChange={(e) => handleNumberInput('inputReduction', e.target.value)} className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-lg outline-none font-bold text-blue-900" />
-                            </>
+                          <>
+                            <label className="block text-sm font-medium text-blue-900 mb-1">입력 압하율 (%)</label>
+                            <input type="number" step="any" autoComplete="off" inputMode="decimal" value={inputs.inputReduction} onChange={(e) => handleNumberInput('inputReduction', e.target.value)} className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-lg outline-none font-bold text-blue-900" />
+                          </>
                         )}
                       </div>
                       <div>
                         <div className="flex justify-between items-center mb-1">
-                            <label className="text-sm font-medium text-slate-700 cursor-pointer flex items-center gap-1 hover:text-blue-600" onClick={toggleThicknessMode}>{inputs.thicknessMode === 'target' ? '목표 두께' : '투입 두께'} <ArrowRightLeft className="w-3 h-3" /></label>
+                          <label className="text-sm font-medium text-slate-700 cursor-pointer flex items-center gap-1 hover:text-blue-600" onClick={toggleThicknessMode}>{inputs.thicknessMode === 'target' ? '목표 두께' : '투입 두께'} <ArrowRightLeft className="w-3 h-3" /></label>
                         </div>
                         <input type="number" step="any" autoComplete="off" inputMode="decimal" value={inputs.thicknessVal} onChange={(e) => handleNumberInput('thicknessVal', e.target.value)} className={`w-full px-3 py-2 border rounded-lg outline-none font-bold ${inputs.thicknessMode === 'target' ? 'border-green-200 bg-green-50 text-green-900' : 'border-orange-200 bg-orange-50 text-orange-900'}`} />
                       </div>
