@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, ReferenceDot, Scatter } from 'recharts';
-import { Upload, Calculator, Info, Thermometer, Database, FileSpreadsheet, List, X, TrendingUp, ArrowRightLeft, Search, Zap, Loader2, Lock, Mail, Key, LogOut } from 'lucide-react';
+// ⭐️ 메모를 위한 새로운 아이콘(MessageSquare, Send, Trash2, Clock)이 추가되었습니다!
+import { Upload, Calculator, Info, Thermometer, Database, FileSpreadsheet, List, X, TrendingUp, ArrowRightLeft, Search, Zap, Loader2, Lock, Mail, Key, LogOut, MessageSquare, Send, Trash2, Clock } from 'lucide-react';
 
-// ⭐️ 중요: 이 코드가 작동하려면 src 폴더 안에 supabase.js 파일이 있어야 합니다!
 import { supabase } from './supabase'; 
 
 // ==========================================
@@ -240,6 +240,11 @@ const App = () => {
   const [uploadStatus, setUploadStatus] = useState({ history: null, material: null });
   const [dataStats, setDataStats] = useState({ total: 0, filtered: 0, criteria: '' });
   
+  // ⭐️ Memo State ---
+  const [memos, setMemos] = useState([]);
+  const [memoInput, setMemoInput] = useState('');
+  const [isMemoLoading, setIsMemoLoading] = useState(false);
+
   // --- App Logic State ---
   const [calcMode, setCalcMode] = useState('reduction'); 
   const [propertyMode, setPropertyMode] = useState('ts'); 
@@ -271,30 +276,27 @@ const App = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setData([]); setMaterialData([]);
+    setData([]); setMaterialData([]); setMemos([]);
   };
 
-  // 📡 1. Supabase에서 데이터를 가져오는 함수
+  // 📡 1. Supabase에서 데이터를 가져오는 함수 (메모도 함께 불러옵니다)
   const fetchDatabase = async () => {
     try {
       setIsFetching(true);
       
-      const { data: historyData, error: historyError } = await supabase
-        .from('history_db')
-        .select('*')
-        .limit(10000); 
-        
+      const { data: historyData, error: historyError } = await supabase.from('history_db').select('*').limit(10000); 
       if (historyError) throw historyError;
 
-      const { data: matData, error: matError } = await supabase
-        .from('material_db')
-        .select('*')
-        .limit(10000); 
-        
+      const { data: matData, error: matError } = await supabase.from('material_db').select('*').limit(10000); 
       if (matError) throw matError;
+
+      // ⭐️ 메모 데이터 불러오기 (최신순 정렬)
+      const { data: memoData, error: memoError } = await supabase.from('memos').select('*').order('created_at', { ascending: false });
+      if (memoError) console.error("메모 불러오기 에러:", memoError);
 
       setData(historyData || []); 
       setMaterialData(matData || []);
+      setMemos(memoData || []);
       setDataStats(prev => ({ ...prev, total: (historyData || []).length }));
 
     } catch (error) {
@@ -303,6 +305,12 @@ const App = () => {
     } finally {
       setIsFetching(false);
     }
+  };
+
+  // ⭐️ 메모 단독 새로고침 함수
+  const fetchMemosOnly = async () => {
+    const { data: memoData } = await supabase.from('memos').select('*').order('created_at', { ascending: false });
+    if (memoData) setMemos(memoData);
   };
 
   useEffect(() => { if (session) fetchDatabase(); }, [session]);
@@ -374,9 +382,7 @@ const App = () => {
       alert("원소재 DB가 비어있습니다. DB 연동을 확인하거나 다시 업로드 해주세요."); 
       return; 
     }
-    
     const searchKey = inputs.materialNo.trim().toLowerCase();
-    
     const found = materialData.find(m => {
       const matNo = m.materialNo || m.materialno || '';
       return matNo.toLowerCase().includes(searchKey);
@@ -386,24 +392,48 @@ const App = () => {
       const ts = found.rawTs !== undefined ? found.rawTs : found.rawts;
       const md = found.md30 !== undefined ? found.md30 : found.md30;
       
-      setInputs(prev => ({ 
-        ...prev, 
-        rawTs: !isNaN(ts) ? ts : prev.rawTs, 
-        md30: !isNaN(md) ? md : prev.md30 
-      }));
-      
+      setInputs(prev => ({ ...prev, rawTs: !isNaN(ts) ? ts : prev.rawTs, md30: !isNaN(md) ? md : prev.md30 }));
       alert(`[${found.materialNo || found.materialno}] 원소재 정보를 성공적으로 불러왔습니다!`);
     } else { 
       alert(`'${inputs.materialNo}' (을)를 원소재 DB에서 찾을 수 없습니다.`); 
     }
   };
 
-  // ⭐️ 방금 누락되었던 핵심 폼 핸들러들을 완벽하게 복구했습니다!
   const handleNumberInput = (field, value) => { setInputs(prev => ({ ...prev, [field]: value })); };
   const toggleThicknessMode = () => { setInputs(prev => ({ ...prev, thicknessMode: prev.thicknessMode === 'target' ? 'input' : 'target' })); };
   const toggleCalcMode = () => { setCalcMode(prev => prev === 'reduction' ? 'ts' : 'reduction'); setResult(null); };
   const togglePropertyMode = () => { setPropertyMode(prev => prev === 'ts' ? 'hv' : 'ts'); setResult(null); };
   const handleKeyDown = (e) => { if (e.key === 'Enter') searchMaterial(); };
+
+  // ⭐️ 4.5 메모 기능 핸들러
+  const handleAddMemo = async (e) => {
+    e.preventDefault();
+    if (!memoInput.trim()) return;
+    
+    setIsMemoLoading(true);
+    const { error } = await supabase.from('memos').insert([
+      { content: memoInput, author_email: session.user.email }
+    ]);
+    setIsMemoLoading(false);
+
+    if (error) {
+      alert("메모 저장에 실패했습니다.");
+    } else {
+      setMemoInput(''); // 입력창 초기화
+      fetchMemosOnly(); // 목록 새로고침
+    }
+  };
+
+  const handleDeleteMemo = async (id) => {
+    if (!window.confirm("이 메모를 정말 삭제하시겠습니까?")) return;
+    
+    const { error } = await supabase.from('memos').delete().eq('id', id);
+    if (error) {
+      alert("메모 삭제에 실패했습니다.");
+    } else {
+      fetchMemosOnly();
+    }
+  };
 
   // --- 5. 핵심 계산 로직 (데이터가 바뀌거나 입력이 바뀔 때 실행) ---
   useEffect(() => {
@@ -569,7 +599,7 @@ const App = () => {
               <Calculator className="w-8 h-8 text-blue-600" /> STS 냉간압연 압하율 계산기
             </h1>
             <div className="flex items-center gap-2 mt-1">
-              <p className="text-slate-500 text-sm">v10.5 (Cloud DB & Auth Sync)</p>
+              <p className="text-slate-500 text-sm">v10.6 (Memo Board Added)</p>
               <span className="text-slate-300 text-sm">|</span>
               <p className="text-xs font-semibold text-slate-400 tracking-wide">Made by QA Kim Seong Ryeol</p>
             </div>
@@ -703,8 +733,10 @@ const App = () => {
               </div>
             </div>
 
-            {/* 오른쪽 차트 영역 */}
+            {/* 오른쪽 영역 (차트 + 메모 보드) */}
             <div className="lg:col-span-8 space-y-6">
+              
+              {/* 차트 영역 */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[600px] flex flex-col">
                 <div className="mb-4 flex justify-between items-center flex-wrap gap-2">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2"><Thermometer className="w-5 h-5 text-slate-500" /> {propertyMode === 'ts' ? 'TS' : '경도(HV)'} 예측 분석</h3>
@@ -741,6 +773,69 @@ const App = () => {
                 </div>
                 <p className="text-xs text-slate-400 mt-2 text-center">* 회색 점은 현재 조건(원소재/성분)에 맞게 보정된 유사 백데이터입니다. 이상치는 자동으로 회귀분석에서 제외됩니다.</p>
               </div>
+
+              {/* ⭐️ 새로운 기능: 팀 메모 / 댓글 보드 ⭐️ */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-blue-500" /> 팀 공유 메모장
+                  </h3>
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-full">{memos.length}개의 메모</span>
+                </div>
+                
+                {/* 메모 작성 폼 */}
+                <form onSubmit={handleAddMemo} className="flex gap-2 mb-6">
+                  <input 
+                    type="text" 
+                    value={memoInput} 
+                    onChange={(e) => setMemoInput(e.target.value)}
+                    placeholder="팀원들과 공유할 특이사항이나 메모를 남겨주세요." 
+                    className="flex-1 px-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-slate-50"
+                  />
+                  <button 
+                    type="submit" 
+                    disabled={isMemoLoading || !memoInput.trim()} 
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-1 font-medium text-sm"
+                  >
+                    {isMemoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    등록
+                  </button>
+                </form>
+
+                {/* 메모 리스트 (최신순) */}
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                  {memos.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 text-sm">등록된 메모가 없습니다. 첫 메모를 남겨보세요!</div>
+                  ) : (
+                    memos.map((memo) => {
+                      // 자신이 쓴 글인지 확인 (삭제 권한)
+                      const isMyMemo = memo.author_email === session.user.email;
+                      // 작성 시간 포맷팅
+                      const formattedDate = new Date(memo.created_at).toLocaleString('ko-KR', { 
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+                      });
+
+                      return (
+                        <div key={memo.id} className={`p-4 rounded-lg border ${isMyMemo ? 'bg-blue-50/50 border-blue-100' : 'bg-slate-50 border-slate-100'}`}>
+                          <div className="flex justify-between items-start mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-sm text-slate-700">{memo.author_email.split('@')[0]}</span>
+                              <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock className="w-3 h-3" /> {formattedDate}</span>
+                            </div>
+                            {isMyMemo && (
+                              <button onClick={() => handleDeleteMemo(memo.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="메모 삭제">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap">{memo.content}</p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
             </div>
           </div>
         )}
