@@ -261,21 +261,33 @@ const App = () => {
     setData([]); setMaterialData([]);
   };
 
-  // --- 2. Supabase에서 데이터 불러오기 ---
+// 📡 1. Supabase에서 데이터를 가져오는 함수 (수정된 부분)
   const fetchDatabase = async () => {
     try {
       setIsFetching(true);
-      const { data: historyData, error: historyError } = await supabase.from('history_db').select('*');
+      
+      // ⭐️ select('*') 뒤에 .limit(10000)을 붙여서 10000건까지 한 번에 가져오라고 명시합니다.
+      const { data: historyData, error: historyError } = await supabase
+        .from('history_db')
+        .select('*')
+        .limit(10000); // 👈 이 부분을 추가했어요!
+        
       if (historyError) throw historyError;
 
-      const { data: matData, error: matError } = await supabase.from('material_db').select('*');
+      const { data: matData, error: matError } = await supabase
+        .from('material_db')
+        .select('*')
+        .limit(10000); // 👈 여기도 추가해 주세요!
+        
       if (matError) throw matError;
 
       setData(historyData || []); 
       setMaterialData(matData || []);
       setDataStats(prev => ({ ...prev, total: (historyData || []).length }));
+
     } catch (error) {
-      console.error("데이터 불러오기 실패:", error);
+      console.error("데이터베이스 불러오기 실패:", error);
+      alert("데이터를 불러오지 못했습니다. DB 설정을 확인해주세요.");
     } finally {
       setIsFetching(false);
     }
