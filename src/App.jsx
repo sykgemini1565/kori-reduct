@@ -95,12 +95,14 @@ const parseHistoryCSV = (lines) => {
   return parsedData;
 };
 
+// 기존 parseMaterialCSV 함수 전체를 아래 코드로 교체해주세요.
 const parseMaterialCSV = (lines) => {
   let mainHeaderIndex = -1;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     if (lines[i].includes('원자재No') || lines[i].includes('원자재 관리 No')) { mainHeaderIndex = i; break; }
   }
   if (mainHeaderIndex === -1) return [];
+  
   const headerRow1 = splitCSVRow(lines[mainHeaderIndex]).map(h => h.trim().replace(/^"|"$/g, ''));
   const headerRow2 = (lines.length > mainHeaderIndex + 1) ? splitCSVRow(lines[mainHeaderIndex + 1]).map(h => h.trim().replace(/^"|"$/g, '')) : [];
   
@@ -113,25 +115,36 @@ const parseMaterialCSV = (lines) => {
       }
       return -1;
   };
+
+  // ⭐️ 두 종류의 번호를 모두 찾도록 수정
   const idx = {
-    materialNo: findColumn(['원자재 관리 No', '원자재No', 'LOT No']), 
+    mat1: findColumn(['원자재 관리 No']), 
+    mat2: findColumn(['원자재No', 'LOT No']), 
     ts: findColumn(['인장강도(TS)', '인장강도', 'TS']),
     md30: findColumn(['Md30', 'MD30'])
   };
-  if (idx.materialNo === -1) return [];
+
   const parsedMaterials = [];
   let dataStartIndex = mainHeaderIndex + 1;
   if (lines[dataStartIndex] && (lines[dataStartIndex].includes('값') || lines[dataStartIndex].includes('종류'))) { dataStartIndex++; }
+  
   for (let i = dataStartIndex; i < lines.length; i++) {
     const row = splitCSVRow(lines[i]);
-    if (row.length <= Math.max(idx.materialNo, idx.ts, idx.md30)) continue;
+    if (row.length < 3) continue;
+    
     const getVal = (index) => {
-      if (index === -1 || !row[index]) return NaN;
+      if (index === -1 || index >= row.length || !row[index]) return NaN;
       return parseFloat(row[index].replace(/^"|"$/g, '').replace(/,/g, ''));
     };
-    const matNo = row[idx.materialNo] ? row[idx.materialNo].replace(/^"|"$/g, '').trim() : '';
+
+    const m1 = idx.mat1 !== -1 && row[idx.mat1] ? row[idx.mat1].replace(/^"|"$/g, '').trim() : '';
+    const m2 = idx.mat2 !== -1 && row[idx.mat2] ? row[idx.mat2].replace(/^"|"$/g, '').trim() : '';
+    
+    // ⭐️ 두 번호를 합쳐서 저장 (예: "W100206001 QGA1333") -> 둘 중 뭘로 검색해도 걸립니다!
+    const matNo = `${m1} ${m2}`.trim();
     const ts = getVal(idx.ts);
     const md30 = getVal(idx.md30);
+    
     if (matNo && (!isNaN(ts) || !isNaN(md30))) {
       parsedMaterials.push({ materialNo: matNo, rawTs: ts, md30: md30 });
     }
@@ -343,21 +356,39 @@ const App = () => {
   };
 
   // --- 4. 사용자 입력 폼 핸들러 ---
+// 검색을 수행하는 기존 searchMaterial 함수를 이것으로 교체해주세요. 
   const searchMaterial = () => {
     if (!inputs.materialNo) return;
-    if (materialData.length === 0) { alert("원소재 DB가 비어있습니다."); return; }
+    if (materialData.length === 0) { 
+      alert("원소재 DB가 비어있습니다. DB 연동을 확인하거나 다시 업로드 해주세요."); 
+      return; 
+    }
+    
     const searchKey = inputs.materialNo.trim().toLowerCase();
-    const found = materialData.find(m => m.materialNo && m.materialNo.toLowerCase().includes(searchKey));
-    if (found) {
-      setInputs(prev => ({ ...prev, rawTs: !isNaN(found.rawTs) ? found.rawTs : prev.rawTs, md30: !isNaN(found.md30) ? found.md30 : prev.md30 }));
-    } else { alert(`'${inputs.materialNo}' 정보를 찾을 수 없습니다.`); }
-  };
+    
+    // ⭐️ 대소문자 문제(materialNo vs materialno) 완벽 대응
+    const found = materialData.find(m => {
+      const matNo = m.materialNo || m.materialno || '';
+      return matNo.toLowerCase().includes(searchKey);
+    });
 
-  const handleNumberInput = (field, value) => { setInputs(prev => ({ ...prev, [field]: value })); };
-  const toggleThicknessMode = () => { setInputs(prev => ({ ...prev, thicknessMode: prev.thicknessMode === 'target' ? 'input' : 'target' })); };
-  const toggleCalcMode = () => { setCalcMode(prev => prev === 'reduction' ? 'ts' : 'reduction'); setResult(null); }
-  const togglePropertyMode = () => { setPropertyMode(prev => prev === 'ts' ? 'hv' : 'ts'); setResult(null); };
-  const handleKeyDown = (e) => { if (e.key === 'Enter') searchMaterial(); };
+    if (found) {
+      // ⭐️ 속성 이름 대소문자 문제 완벽 대응
+      const ts = found.rawTs !== undefined ? found.rawTs : found.rawts;
+      const md = found.md30 !== undefined ? found.md30 : found.md30;
+      
+      setInputs(prev => ({ 
+        ...prev, 
+        rawTs: !isNaN(ts) ? ts : prev.rawTs, 
+        md30: !isNaN(md) ? md : prev.md30 
+      }));
+      
+      // ⭐️ 시각적 피드백 제공
+      alert(`[${found.materialNo || found.materialno}] 원소재 정보를 성공적으로 불러왔습니다!`);
+    } else { 
+      alert(`'${inputs.materialNo}' (을)를 원소재 DB에서 찾을 수 없습니다.`); 
+    }
+  };
 
   // --- 5. 핵심 계산 로직 (데이터가 바뀌거나 입력이 바뀔 때 실행) ---
   useEffect(() => {
